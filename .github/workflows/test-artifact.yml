@@ -14,7 +14,9 @@ jobs:
             - name: Package linux-x64 artifact
               run: |
                   mkdir -p cli/test-artifacts
-                  tar -czf cli/test-artifacts/hapi-linux-x64-test.tar.gz -C cli/dist-exe/bun-linux-x64 hapi
+                  artifact_dir="$(find cli/dist-exe -maxdepth 1 -type d -name 'bun-linux-x64*' | head -n 1)"
+                  test -n "$artifact_dir"
+                  tar -czf cli/test-artifacts/hapi-linux-x64-test.tar.gz -C "$artifact_dir" hapi
             - name: Upload linux-x64 artifact
               uses: actions/upload-artifact@v4
               with:
