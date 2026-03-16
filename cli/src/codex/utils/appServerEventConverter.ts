@@ -207,7 +207,26 @@ export class AppServerEventConverter {
             });
         }
 
-        if (msgType === 'agent_reasoning_delta' || msgType === 'agent_reasoning' || msgType === 'agent_message') {
+        if (msgType === 'agent_message') {
+            const itemId = asString(msg.item_id ?? msg.itemId ?? msg.id);
+            const message = asString(msg.message ?? msg.text);
+            if (!message) {
+                return [];
+            }
+
+            if (itemId) {
+                if (this.completedAgentMessageItems.has(itemId)) {
+                    return [];
+                }
+                this.completedAgentMessageItems.add(itemId);
+                this.agentMessageBuffers.delete(itemId);
+                this.lastAgentMessageDeltaByItemId.delete(itemId);
+            }
+
+            return [{ type: 'agent_message', message }];
+        }
+
+        if (msgType === 'agent_reasoning_delta' || msgType === 'agent_reasoning') {
             return [];
         }
 

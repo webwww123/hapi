@@ -231,14 +231,32 @@ describe('AppServerEventConverter', () => {
         expect(direct).toEqual([]);
     });
 
-    it('ignores wrapped final agent message and relies on item completion', () => {
+    it('uses wrapped final agent message as a fallback when canonical completion is missing', () => {
         const converter = new AppServerEventConverter();
 
         const wrapped = converter.handleNotification('codex/event/agent_message', {
             msg: { type: 'agent_message', item_id: 'msg-1', message: 'Hello' }
         });
 
-        expect(wrapped).toEqual([]);
+        expect(wrapped).toEqual([{ type: 'agent_message', message: 'Hello' }]);
+    });
+
+    it('deduplicates canonical completion after wrapped final agent message fallback', () => {
+        const converter = new AppServerEventConverter();
+
+        const wrapped = converter.handleNotification('codex/event/agent_message', {
+            msg: { type: 'agent_message', item_id: 'msg-1', message: 'Hello' }
+        });
+        const completed = converter.handleNotification('codex/event/item_completed', {
+            msg: {
+                type: 'item_completed',
+                item_id: 'msg-1',
+                item: { id: 'msg-1', type: 'AgentMessage', text: 'Hello' }
+            }
+        });
+
+        expect(wrapped).toEqual([{ type: 'agent_message', message: 'Hello' }]);
+        expect(completed).toEqual([]);
     });
 
     it('ignores wrapped retryable errors', () => {
