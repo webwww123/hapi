@@ -1,0 +1,22 @@
+name: Build Test Artifact
+
+on:
+    workflow_dispatch:
+
+jobs:
+    build-linux-x64:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: oven-sh/setup-bun@v2
+            - run: bun install
+            - run: bun run build:single-exe
+            - name: Package linux-x64 artifact
+              run: |
+                  mkdir -p cli/test-artifacts
+                  tar -czf cli/test-artifacts/hapi-linux-x64-test.tar.gz -C cli/dist-exe/bun-linux-x64 hapi
+            - name: Upload linux-x64 artifact
+              uses: actions/upload-artifact@v4
+              with:
+                  name: hapi-linux-x64-test
+                  path: cli/test-artifacts/hapi-linux-x64-test.tar.gz
