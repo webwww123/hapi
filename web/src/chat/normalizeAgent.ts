@@ -300,6 +300,26 @@ export function normalizeAgentRecord(
         const data = isObject(content.data) ? content.data : null
         if (!data || typeof data.type !== 'string') return null
 
+        const streamId = asString(data.itemId) ?? asString(data.item_id) ?? null
+
+        if (data.type === 'message-delta' && typeof data.message === 'string') {
+            return {
+                id: messageId,
+                localId,
+                createdAt,
+                role: 'agent',
+                isSidechain: false,
+                content: [{
+                    type: 'text',
+                    text: data.message,
+                    streamId,
+                    uuid: streamId ?? messageId,
+                    parentUUID: null
+                }],
+                meta
+            }
+        }
+
         if (data.type === 'message' && typeof data.message === 'string') {
             return {
                 id: messageId,
@@ -307,7 +327,13 @@ export function normalizeAgentRecord(
                 createdAt,
                 role: 'agent',
                 isSidechain: false,
-                content: [{ type: 'text', text: data.message, uuid: messageId, parentUUID: null }],
+                content: [{
+                    type: 'text',
+                    text: data.message,
+                    streamId,
+                    uuid: streamId ?? messageId,
+                    parentUUID: null
+                }],
                 meta
             }
         }

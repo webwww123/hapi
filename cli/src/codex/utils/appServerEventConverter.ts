@@ -135,6 +135,7 @@ export class AppServerEventConverter {
     private readonly lastAgentMessageDeltaByItemId = new Map<string, string>();
     private readonly lastReasoningDeltaByItemId = new Map<string, string>();
     private readonly lastCommandOutputDeltaByItemId = new Map<string, string>();
+    private readonly anonymousWrappedAgentMessages = new Set<string>();
 
     private handleWrappedCodexEvent(paramsRecord: Record<string, unknown>): ConvertedEvent[] | null {
         const msg = asRecord(paramsRecord.msg);
@@ -185,9 +186,9 @@ export class AppServerEventConverter {
         }
 
         if (msgType === 'agent_message_delta' || msgType === 'agent_message_content_delta') {
-            const itemId = asString(msg.item_id ?? msg.itemId ?? msg.id) ?? 'agent-message';
+            const itemId = asString(msg.item_id ?? msg.itemId ?? msg.id);
             const delta = asString(msg.delta ?? msg.text ?? msg.message);
-            if (!delta) return [];
+            if (!itemId || !delta) return [];
             return this.handleNotification('item/agentMessage/delta', { itemId, delta });
         }
 
@@ -208,10 +209,21 @@ export class AppServerEventConverter {
         }
 
         if (msgType === 'agent_message') {
-            const itemId = asString(msg.item_id ?? msg.itemId ?? msg.id);
+            let itemId = asString(msg.item_id ?? msg.itemId ?? msg.id);
             const message = asString(msg.message ?? msg.text);
             if (!message) {
                 return [];
+            }
+
+            if (!itemId && this.agentMessageBuffers.size === 1) {
+                const [bufferedItemId, bufferedMessage] = Array.from(this.agentMessageBuffers.entries())[0];
+                if (
+                    bufferedMessage === message
+                    || message.startsWith(bufferedMessage)
+                    || bufferedMessage.startsWith(message)
+                ) {
+                    itemId = bufferedItemId;
+                }
             }
 
             if (itemId) {
@@ -221,9 +233,15 @@ export class AppServerEventConverter {
                 this.completedAgentMessageItems.add(itemId);
                 this.agentMessageBuffers.delete(itemId);
                 this.lastAgentMessageDeltaByItemId.delete(itemId);
+            } else {
+                this.anonymousWrappedAgentMessages.add(message);
             }
 
-            return [{ type: 'agent_message', message }];
+            return [{
+                type: 'agent_message',
+                message,
+                ...(itemId ? { item_id: itemId } : {})
+            }];
         }
 
         if (msgType === 'agent_reasoning_delta' || msgType === 'agent_reasoning') {
@@ -347,7 +365,9 @@ export class AppServerEventConverter {
                 }
                 this.lastAgentMessageDeltaByItemId.set(itemId, delta);
                 const prev = this.agentMessageBuffers.get(itemId) ?? '';
-                this.agentMessageBuffers.set(itemId, prev + delta);
+                const next = prev + delta;
+                this.agentMessageBuffers.set(itemId, next);
+                events.push({ type: 'agent_message_delta', item_id: itemId, delta, message: next });
             }
             return events;
         }
@@ -415,7 +435,11 @@ export class AppServerEventConverter {
                     }
                     const text = extractItemText(item) ?? this.agentMessageBuffers.get(itemId);
                     if (text) {
-                        events.push({ type: 'agent_message', message: text });
+                        if (this.anonymousWrappedAgentMessages.has(text)) {
+                            this.anonymousWrappedAgentMessages.delete(text);
+                        } else {
+                            events.push({ type: 'agent_message', message: text, item_id: itemId });
+                        }
                         this.completedAgentMessageItems.add(itemId);
                         this.agentMessageBuffers.delete(itemId);
                     }
@@ -539,5 +563,6 @@ export class AppServerEventConverter {
         this.lastAgentMessageDeltaByItemId.clear();
         this.lastReasoningDeltaByItemId.clear();
         this.lastCommandOutputDeltaByItemId.clear();
+        this.anonymousWrappedAgentMessages.clear();
     }
 }

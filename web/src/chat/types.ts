@@ -52,6 +52,7 @@ export type NormalizedAgentContent =
     | {
         type: 'text'
         text: string
+        streamId?: string | null
         uuid: string
         parentUUID: string | null
     }
