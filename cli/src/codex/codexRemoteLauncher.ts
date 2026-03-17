@@ -16,6 +16,7 @@ import { AppServerEventConverter } from './utils/appServerEventConverter';
 import { registerAppServerPermissionHandlers } from './utils/appServerPermissionAdapter';
 import { buildThreadStartParams, buildTurnStartParams } from './utils/appServerConfig';
 import { shouldIgnoreTerminalEvent } from './utils/terminalEventGuard';
+import { buildSyntheticPreambleFromToolInput } from './utils/codexSyntheticPreamble';
 import {
     RemoteLauncherBase,
     type RemoteLauncherDisplayContext,
@@ -118,6 +119,8 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
         const appServerEventConverter = new AppServerEventConverter();
         const lastStreamedAgentMessageByItemId = new Map<string, string>();
         let lastEmittedAgentMessage: { message: string; emittedAt: number } | null = null;
+        let hasVisibleAssistantTextThisTurn = false;
+        let hasSyntheticPreambleThisTurn = false;
 
         const normalizeCommand = (value: unknown): string | undefined => {
             if (typeof value === 'string') {
@@ -254,6 +257,8 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 } else if (!this.currentTurnId) {
                     allowAnonymousTerminalEvent = true;
                 }
+                hasVisibleAssistantTextThisTurn = false;
+                hasSyntheticPreambleThisTurn = false;
             }
 
             if (isTerminalEvent) {
@@ -277,12 +282,14 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             if (msgType === 'agent_message') {
                 const message = asString(msg.message);
                 if (message) {
+                    hasVisibleAssistantTextThisTurn = true;
                     messageBuffer.addMessage(message, 'assistant');
                 }
             } else if (msgType === 'agent_message_delta') {
                 const message = asString(msg.message);
                 const itemId = asString(msg.item_id ?? msg.itemId);
                 if (message && itemId) {
+                    hasVisibleAssistantTextThisTurn = true;
                     const lastStreamed = lastStreamedAgentMessageByItemId.get(itemId) ?? '';
                     const minChunkSize = lastStreamed.length === 0 ? 8 : 24;
                     const shouldEmit = message.length - lastStreamed.length >= minChunkSize
@@ -340,6 +347,8 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 allowAnonymousTerminalEvent = false;
                 lastStreamedAgentMessageByItemId.clear();
                 lastEmittedAgentMessage = null;
+                hasVisibleAssistantTextThisTurn = false;
+                hasSyntheticPreambleThisTurn = false;
                 if (session.thinking) {
                     logger.debug('thinking completed');
                     session.onThinkingChange(false);
@@ -400,6 +409,19 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                     delete inputs.type;
                     delete inputs.call_id;
                     delete inputs.callId;
+
+                    if (msgType === 'exec_command_begin' && !hasVisibleAssistantTextThisTurn && !hasSyntheticPreambleThisTurn) {
+                        const preamble = buildSyntheticPreambleFromToolInput(inputs);
+                        if (preamble) {
+                            session.sendCodexMessage({
+                                type: 'message',
+                                message: preamble,
+                                id: randomUUID()
+                            });
+                            hasSyntheticPreambleThisTurn = true;
+                            hasVisibleAssistantTextThisTurn = true;
+                        }
+                    }
 
                     session.sendCodexMessage({
                         type: 'tool-call',
