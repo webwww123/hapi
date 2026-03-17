@@ -59,6 +59,7 @@ Bun workspaces; `shared` consumed by cli, hub, web.
 - Path alias `@/*` maps to `./src/*` per package
 - Prefer 4-space indentation
 - Zod for runtime validation (schemas in `shared/src/schemas.ts`)
+- Fork CI-only rule: do not run local builds, local typecheck, or local test suites for validation. Use GitHub Actions / CI for validation and download CI artifacts for any verification that needs built binaries.
 
 ## Common commands (repo root)
 

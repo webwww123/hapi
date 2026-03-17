@@ -35,13 +35,15 @@ describe('AppServerEventConverter', () => {
     it('accumulates agent message deltas', () => {
         const converter = new AppServerEventConverter();
 
-        converter.handleNotification('item/agentMessage/delta', { itemId: 'msg-1', delta: 'Hello' });
-        converter.handleNotification('item/agentMessage/delta', { itemId: 'msg-1', delta: ' world' });
+        expect(converter.handleNotification('item/agentMessage/delta', { itemId: 'msg-1', delta: 'Hello' }))
+            .toEqual([{ type: 'agent_message_delta', item_id: 'msg-1', delta: 'Hello', message: 'Hello' }]);
+        expect(converter.handleNotification('item/agentMessage/delta', { itemId: 'msg-1', delta: ' world' }))
+            .toEqual([{ type: 'agent_message_delta', item_id: 'msg-1', delta: ' world', message: 'Hello world' }]);
         const completed = converter.handleNotification('item/completed', {
             item: { id: 'msg-1', type: 'agentMessage' }
         });
 
-        expect(completed).toEqual([{ type: 'agent_message', message: 'Hello world' }]);
+        expect(completed).toEqual([{ type: 'agent_message', message: 'Hello world', item_id: 'msg-1' }]);
     });
 
     it('deduplicates repeated agent message completions for the same item', () => {
@@ -55,7 +57,7 @@ describe('AppServerEventConverter', () => {
             item: { id: 'msg-1', type: 'agentMessage' }
         });
 
-        expect(first).toEqual([{ type: 'agent_message', message: 'Hello' }]);
+        expect(first).toEqual([{ type: 'agent_message', message: 'Hello', item_id: 'msg-1' }]);
         expect(second).toEqual([]);
     });
 
@@ -163,12 +165,12 @@ describe('AppServerEventConverter', () => {
     it('unwraps codex/event agent deltas and item completion', () => {
         const converter = new AppServerEventConverter();
 
-        converter.handleNotification('codex/event/agent_message_delta', {
+        expect(converter.handleNotification('codex/event/agent_message_delta', {
             msg: { type: 'agent_message_delta', item_id: 'msg-1', delta: 'Hello' }
-        });
-        converter.handleNotification('codex/event/agent_message_content_delta', {
+        })).toEqual([{ type: 'agent_message_delta', item_id: 'msg-1', delta: 'Hello', message: 'Hello' }]);
+        expect(converter.handleNotification('codex/event/agent_message_content_delta', {
             msg: { type: 'agent_message_content_delta', item_id: 'msg-1', delta: ' world' }
-        });
+        })).toEqual([{ type: 'agent_message_delta', item_id: 'msg-1', delta: ' world', message: 'Hello world' }]);
 
         const completed = converter.handleNotification('codex/event/item_completed', {
             msg: {
@@ -178,7 +180,7 @@ describe('AppServerEventConverter', () => {
             }
         });
 
-        expect(completed).toEqual([{ type: 'agent_message', message: 'Hello world' }]);
+        expect(completed).toEqual([{ type: 'agent_message', message: 'Hello world', item_id: 'msg-1' }]);
     });
 
     it('unwraps codex/event reasoning completion from summary text', () => {
@@ -231,14 +233,67 @@ describe('AppServerEventConverter', () => {
         expect(direct).toEqual([]);
     });
 
-    it('ignores wrapped final agent message and relies on item completion', () => {
+    it('uses wrapped final agent message as a fallback when canonical completion is missing', () => {
         const converter = new AppServerEventConverter();
 
         const wrapped = converter.handleNotification('codex/event/agent_message', {
             msg: { type: 'agent_message', item_id: 'msg-1', message: 'Hello' }
         });
 
-        expect(wrapped).toEqual([]);
+        expect(wrapped).toEqual([{ type: 'agent_message', message: 'Hello', item_id: 'msg-1' }]);
+    });
+
+    it('infers wrapped final agent message item id from buffered canonical deltas', () => {
+        const converter = new AppServerEventConverter();
+
+        converter.handleNotification('item/agentMessage/delta', { itemId: 'msg-1', delta: 'Hello' });
+        const wrapped = converter.handleNotification('codex/event/agent_message', {
+            msg: { type: 'agent_message', message: 'Hello' }
+        });
+
+        expect(wrapped).toEqual([{ type: 'agent_message', message: 'Hello', item_id: 'msg-1' }]);
+    });
+
+    it('deduplicates canonical completion after wrapped final agent message fallback', () => {
+        const converter = new AppServerEventConverter();
+
+        const wrapped = converter.handleNotification('codex/event/agent_message', {
+            msg: { type: 'agent_message', item_id: 'msg-1', message: 'Hello' }
+        });
+        const completed = converter.handleNotification('codex/event/item_completed', {
+            msg: {
+                type: 'item_completed',
+                item_id: 'msg-1',
+                item: { id: 'msg-1', type: 'AgentMessage', text: 'Hello' }
+            }
+        });
+
+        expect(wrapped).toEqual([{ type: 'agent_message', message: 'Hello', item_id: 'msg-1' }]);
+        expect(completed).toEqual([]);
+    });
+
+    it('ignores wrapped agent deltas that do not include item ids', () => {
+        const converter = new AppServerEventConverter();
+
+        const events = converter.handleNotification('codex/event/agent_message_delta', {
+            msg: { type: 'agent_message_delta', delta: 'Hello' }
+        });
+
+        expect(events).toEqual([]);
+    });
+
+    it('deduplicates anonymous wrapped final agent message against canonical completion', () => {
+        const converter = new AppServerEventConverter();
+
+        const wrapped = converter.handleNotification('codex/event/agent_message', {
+            msg: { type: 'agent_message', message: 'Hello' }
+        });
+        const completed = converter.handleNotification('item/completed', {
+            item: { id: 'msg-1', type: 'agentMessage', text: 'Hello' }
+        });
+
+        expect(wrapped).toEqual([{ type: 'agent_message', message: 'Hello' }]);
+        expect(completed).toEqual([]);
     });
 
     it('ignores wrapped retryable errors', () => {

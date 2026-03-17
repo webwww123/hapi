@@ -116,6 +116,8 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
         const messageBuffer = this.messageBuffer;
         const appServerClient = this.appServerClient;
         const appServerEventConverter = new AppServerEventConverter();
+        const lastStreamedAgentMessageByItemId = new Map<string, string>();
+        let lastEmittedAgentMessage: { message: string; emittedAt: number } | null = null;
 
         const normalizeCommand = (value: unknown): string | undefined => {
             if (typeof value === 'string') {
@@ -277,6 +279,24 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
                 if (message) {
                     messageBuffer.addMessage(message, 'assistant');
                 }
+            } else if (msgType === 'agent_message_delta') {
+                const message = asString(msg.message);
+                const itemId = asString(msg.item_id ?? msg.itemId);
+                if (message && itemId) {
+                    const lastStreamed = lastStreamedAgentMessageByItemId.get(itemId) ?? '';
+                    const minChunkSize = lastStreamed.length === 0 ? 8 : 24;
+                    const shouldEmit = message.length - lastStreamed.length >= minChunkSize
+                        || /[\n\r。！？.!?:：]$/.test(message);
+                    if (shouldEmit) {
+                        lastStreamedAgentMessageByItemId.set(itemId, message);
+                        session.sendCodexMessage({
+                            type: 'message-delta',
+                            message,
+                            itemId,
+                            id: randomUUID()
+                        });
+                    }
+                }
             } else if (msgType === 'agent_reasoning') {
                 const text = asString(msg.text);
                 if (text) {
@@ -318,6 +338,8 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             if (isTerminalEvent) {
                 turnInFlight = false;
                 allowAnonymousTerminalEvent = false;
+                lastStreamedAgentMessageByItemId.clear();
+                lastEmittedAgentMessage = null;
                 if (session.thinking) {
                     logger.debug('thinking completed');
                     session.onThinkingChange(false);
@@ -349,12 +371,26 @@ class CodexRemoteLauncher extends RemoteLauncherBase {
             }
             if (msgType === 'agent_message') {
                 const message = asString(msg.message);
+                const itemId = asString(msg.item_id ?? msg.itemId);
                 if (message) {
-                    session.sendCodexMessage({
-                        type: 'message',
-                        message,
-                        id: randomUUID()
-                    });
+                    const now = Date.now();
+                    const isDuplicateAnonymousMessage =
+                        !itemId
+                        && lastEmittedAgentMessage
+                        && lastEmittedAgentMessage.message === message
+                        && now - lastEmittedAgentMessage.emittedAt < 5_000;
+                    if (!isDuplicateAnonymousMessage) {
+                        if (itemId) {
+                            lastStreamedAgentMessageByItemId.delete(itemId);
+                        }
+                        session.sendCodexMessage({
+                            type: 'message',
+                            message,
+                            ...(itemId ? { itemId } : {}),
+                            id: randomUUID()
+                        });
+                        lastEmittedAgentMessage = { message, emittedAt: now };
+                    }
                 }
             }
             if (msgType === 'exec_command_begin' || msgType === 'exec_approval_request') {

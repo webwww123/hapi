@@ -4,6 +4,36 @@ import { createCliOutputBlock, isCliOutputText, mergeCliOutputBlocks } from '@/c
 import { parseMessageAsEvent } from '@/chat/reducerEvents'
 import { ensureToolBlock, extractTitleFromChangeTitleInput, isChangeTitleToolName, type PermissionEntry } from '@/chat/reducerTools'
 
+function upsertStreamTextBlock(args: {
+    blocks: ChatBlock[]
+    streamBlocksById: Map<string, ChatBlock>
+    streamId: string
+    localId: string | null
+    createdAt: number
+    text: string
+    meta: unknown
+}): void {
+    const blockId = `stream:${args.streamId}`
+    const existing = args.streamBlocksById.get(blockId)
+    if (existing && existing.kind === 'agent-text') {
+        existing.text = args.text
+        existing.localId = args.localId
+        existing.meta = args.meta
+        return
+    }
+
+    const block: ChatBlock = {
+        kind: 'agent-text',
+        id: blockId,
+        localId: args.localId,
+        createdAt: args.createdAt,
+        text: args.text,
+        meta: args.meta
+    }
+    args.streamBlocksById.set(blockId, block)
+    args.blocks.push(block)
+}
+
 export function reduceTimeline(
     messages: TracedMessage[],
     context: {
@@ -16,6 +46,7 @@ export function reduceTimeline(
 ): { blocks: ChatBlock[]; toolBlocksById: Map<string, ToolCallBlock>; hasReadyEvent: boolean } {
     const blocks: ChatBlock[] = []
     const toolBlocksById = new Map<string, ToolCallBlock>()
+    const streamBlocksById = new Map<string, ChatBlock>()
     let hasReadyEvent = false
 
     for (const msg of messages) {
@@ -76,6 +107,18 @@ export function reduceTimeline(
             for (let idx = 0; idx < msg.content.length; idx += 1) {
                 const c = msg.content[idx]
                 if (c.type === 'text') {
+                    if (typeof c.streamId === 'string' && c.streamId.length > 0) {
+                        upsertStreamTextBlock({
+                            blocks,
+                            streamBlocksById,
+                            streamId: c.streamId,
+                            localId: msg.localId,
+                            createdAt: msg.createdAt,
+                            text: c.text,
+                            meta: msg.meta
+                        })
+                        continue
+                    }
                     if (isCliOutputText(c.text, msg.meta)) {
                         blocks.push(createCliOutputBlock({
                             id: `${msg.id}:${idx}`,
