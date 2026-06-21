@@ -20,5 +20,7 @@ jobs:
             - name: Upload linux-x64 artifact
               uses: actions/upload-artifact@v4
               with:
+                retention-days: 3
+              with:
                   name: hapi-linux-x64-test
                   path: cli/test-artifacts/hapi-linux-x64-test.tar.gz
